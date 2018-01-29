@@ -1,0 +1,10 @@
+#ifndef MECS_PARAMETERS
+#define MECS_PARAMETERS
+
+
+
+
+
+
+
+#endif // MECS_PARAMETERS
