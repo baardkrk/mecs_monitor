@@ -1,0 +1,14 @@
+<launch>
+
+  <include file="$(find kinect2_bridge)/launch/kinect2_bridge.launch">
+    <arg name="base_name" value="camera_0" />
+    <arg name="sensor" value="004783654147" />
+    <arg name="publish_tf" value="true" />
+  </include>
+
+  <node name="info_extractor_cam_0" pkg="mecs_monitor" type="info_extractor_node" output="screen">
+    <arg name="camera" value="/camera_0" />
+    <arg name="quality" value="/sd" />
+  </node>
+
+</launch>
