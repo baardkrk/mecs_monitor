@@ -4,8 +4,11 @@
 #include <cv_bridge/cv_bridge.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <geometry_msgs/Point.h>
+#include <Eigen/Dense>
 
 #include <mecs_monitor/ExtInfo.h>
+
+#include <math.h>
 
 ///////// OpenPose dependencies //////////
 #include <openpose/core/headers.hpp>
@@ -15,23 +18,6 @@
 #include <openpose/utilities/headers.hpp>
 
 /**
- * Input:  The 2d images we want to create a pose from and the camera
- *         information for these images. 
- * Output: A 3d matrix with the 2d and estimated 3d coordinates
- *         of each person detected in the input.
- *                  +------------+-----+------------+
- *         person 0 | keypoint 0 | ... | keypoint N |
- *                : |     :      |  :  |     :      |
- *         person M | keypoint 0 | ... | keypoint N |
- *                  +------------+-----+------------+
- *
- *         person 0:
- *                    +-----+-----+-----+-----+-----+-------+
- *         keypoint 0 | row | col |  X  |  Y  |  Z  | score |
- *                  : |  :  |  :  |  :  |  :  |  :  |   :   |
- *         keypoint N | row | col |  X  |  Y  |  Z  | score |
- *                    +-----+-----+-----+-----+-----+-------+
- *
  * The 2D keypoints are obtained using OpenPose. 
  * We'll create a few options for HOW we calculate the different 
  * 3D keypoints:
@@ -44,12 +30,33 @@
 class InfoExtractor {
 
  private:
-  // We choose to pass in the whole cv Matrices here, since
-  // OpenPose wants the input on that format. And, since we're also going
-  // to do manipulations/references to the images it's annoying to
-  // reference them with a pointer all the time. Although implementing
-  // this could speed up the code if neccesary at a later time.
-  cv::Mat rgb, depth, ir, blurred_depth;
+
+  // ====================================================================================================
+  /**
+   * Parameters for the human Model created form the COCO Pose model and the 
+   * Drillis average human proportions.
+   */
+  // ====================================================================================================
+  std::string constrained_limbs_names[15] = {"  hWidth", "  lCheek", "   lSide", "  rCheek", "   rSide",
+					     "shoulder", "    lArm", "lForearm", "    rArm", "rForearm",
+					     "     hip", "  lThigh", "    lLeg", "  rThigh", "    rLeg"};
+  // the edges
+  int constrained_limb_pairs[15][2] = {{16,17}, {0,15},  {15,17}, {0,14}, {14,16},
+				       {5,2},   {5,6},   {6,7},   {2,3},  {3,4},
+				       {8,11},  {11,12}, {12,13}, {8,9},  {9,10}};
+  // the connections from each keypoint in the constrained graphs. -1 means no second connection (leaf)
+  // also, the connections are only the ones shown in each graph.
+  int constrained_keypoint_connections[18][2] = {{14,15}, {2,5},   {1,3},   {2,4}, {3,-1},
+						 {1,6},   {5,7},   {6,-1},
+						 {11,9},  {8,10},  {9,-1},
+						 {8,12},  {11,13}, {12,-1},
+						 {0,16},  {0,17},  {14,17}, {15,16}};
+  double kp_Zd[18] = {0, 0, 0.05, 0.03, 0.02, 0.05, 0.03, 0.02, 0, 0.05, 0.03, 0, 0.05, 0.03, 0, 0, 0, 0};
+  Eigen::VectorXd norm_constr;
+  // ====================================================================================================
+  
+  // images for this frame
+  cv::Mat rgb, depth, ir, hd;
   sensor_msgs::CameraInfo::ConstPtr camera_info;
 
   // OpenPose parameters
@@ -61,22 +68,25 @@ class InfoExtractor {
   op::OpOutputToCvMat opOutputToCvMat;
   op::FrameDisplayer *frameDisplayer;
 
-  // Methods
-  op::Array<float> run_openpose(cv::Mat inputImage, std::string pw_name);
-  std::tuple<double, double, double> project_3d(int row, int col);
+  // Image and 3D mapping
+  Eigen::Vector3d project_to_3d(cv::Point point, double dZ);
+  cv::Point project_to_img(Eigen::Vector3d);
+  cv::Point img_map(cv::Mat src, cv::Mat dst, cv::Point point);
+
+  // Info extraction
+  op::Array<float> run_openpose(cv::Mat inputImage, std::string pw_name); 
   std_msgs::Float64MultiArray get_3d_keypoints(op::Array<float> keypoints);
-  
+  std::tuple<cv::Point, cv::Point> get_roi(Eigen::Vector3d point, double width, double height,
+					   double dX, double dY);
+  /* cv::Mat get_roi(cv::Point* points); */ // TODO
+
+
  public:
   InfoExtractor();
-  /* void update(sensor_msgs::CameraInfo::ConstPtr& _camera_info, */
-  /* 	      cv::Mat _rgb, cv::Mat _depth, cv::Mat _ir); */
   mecs_monitor::ExtInfo extract(sensor_msgs::CameraInfo::ConstPtr& _camera_info,
 				cv::Mat _rgb, cv::Mat _depth, cv::Mat _ir);
-  /* std::vector<int, int, double, */
-  /*   double, double, double> InfoExtractor::get_locations(); */
   void test();
 };
-
 
 
 #endif // INFO_EXTRACTOR_H

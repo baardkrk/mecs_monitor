@@ -24,17 +24,20 @@ class KinectSubscriber
   image_transport::SubscriberFilter rgb_sub;
   image_transport::SubscriberFilter depth_sub;
   image_transport::SubscriberFilter ir_sub;
+  // image_transport::SubscriberFilter hd_sub;
   message_filters::Subscriber<sensor_msgs::CameraInfo> info_sub;
 
   cv_bridge::CvImagePtr rgb_ptr;
   cv_bridge::CvImagePtr depth_ptr;
   cv_bridge::CvImagePtr ir_ptr;
+  // cv_bridge::CvImagePtr hd_ptr;
   sensor_msgs::CameraInfo::ConstPtr info_ptr;
 
   typedef message_filters::sync_policies::ApproximateTime<
     sensor_msgs::Image,
     sensor_msgs::Image,
     sensor_msgs::Image,
+    // sensor_msgs::Image,
     sensor_msgs::CameraInfo> KinectSyncPolicy;
 
   message_filters::Synchronizer< KinectSyncPolicy > sync;
@@ -44,10 +47,12 @@ class KinectSubscriber
   void callback(const sensor_msgs::ImageConstPtr& rgb_msg,
 		const sensor_msgs::ImageConstPtr& depth_msg,
 		const sensor_msgs::ImageConstPtr& ir_msg,
+		// const sensor_msgs::ImageConstPtr& hd_msg,
 		const sensor_msgs::CameraInfoConstPtr& info_msg);
   cv_bridge::CvImagePtr& get_cv_rgb_ptr();
   cv_bridge::CvImagePtr& get_cv_depth_ptr();
   cv_bridge::CvImagePtr& get_cv_ir_ptr();
+  // cv_bridge::CvImagePtr& get_cv_hd_ptr();
   sensor_msgs::CameraInfo::ConstPtr& get_camera_info();
 };
 

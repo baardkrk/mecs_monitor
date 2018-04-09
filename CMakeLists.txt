@@ -227,14 +227,20 @@ set(SOURCES
   # src/openpose_flags.cpp
   )
 
+set(TRACKER_SOURCES
+  src/mecs_renderer.cpp)
+
 
 add_executable(info_extractor_node src/mecs_info_publisher.cpp ${SOURCES})
-
+add_executable(mecs_tracker_node src/mecs_tracker.cpp ${TRACKER_SOURCES})
 
 add_dependencies(info_extractor_node #${PROJECT_NAME}_node
   ${${PROJECT_NAME}_EXPORTED_TARGETS}
   ${catkin_EXPORTED_TARGETS}
   ${SOURCES})
+add_dependencies(mecs_tracker_node
+  ${${PROJECT_NAME}_EXPORTED_TARGETS}
+  ${catkin_EXPORTED_TARGETS})
 
 target_link_libraries(info_extractor_node# ${PROJECT_NAME}_node
   ${catkin_LIBRARIES}
@@ -242,3 +248,5 @@ target_link_libraries(info_extractor_node# ${PROJECT_NAME}_node
   ${openpose_LINK_LIBRARY}
   ${caffe_LINK_LIBRARY}
   )
+target_link_libraries(mecs_tracker_node 
+  ${catkin_LIBRARIES})
