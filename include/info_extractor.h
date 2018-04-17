@@ -30,13 +30,12 @@
 class InfoExtractor {
 
  private:
-
   // ====================================================================================================
   /**
    * Parameters for the human Model created form the COCO Pose model and the 
    * Drillis average human proportions.
    */
-  // ====================================================================================================
+  // ----------------------------------------------------------------------------------------------------
   std::string constrained_limbs_names[15] = {"  hWidth", "  lCheek", "   lSide", "  rCheek", "   rSide",
 					     "shoulder", "    lArm", "lForearm", "    rArm", "rForearm",
 					     "     hip", "  lThigh", "    lLeg", "  rThigh", "    rLeg"};
@@ -44,21 +43,69 @@ class InfoExtractor {
   int constrained_limb_pairs[15][2] = {{16,17}, {0,15},  {15,17}, {0,14}, {14,16},
 				       {5,2},   {5,6},   {6,7},   {2,3},  {3,4},
 				       {8,11},  {11,12}, {12,13}, {8,9},  {9,10}};
+
+  static constexpr const double edge_lengths[18][18] = {
+    {   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,.035,.035,   0,   0},
+    {   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0},
+    {   0,   0,   0,.186,   0,.259,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0},
+    {   0,   0,.186,   0,.146,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0},
+    {   0,   0,   0,.146,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0},
+    {   0,   0,.259,   0,   0,   0,.186,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0},
+    {   0,   0,   0,   0,.186,   0,   0,.146,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0},
+    {   0,   0,   0,   0,   0,   0,.146,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0},
+    {   0,   0,   0,   0,   0,   0,   0,   0,   0,.245,   0,.191,   0,   0,   0,   0,   0,   0},
+    {   0,   0,   0,   0,   0,   0,   0,   0,.245,   0,.246,   0,   0,   0,   0,   0,   0,   0},
+    {   0,   0,   0,   0,   0,   0,   0,   0,   0,.246,   0,   0,   0,   0,   0,   0,   0,   0},
+    {   0,   0,   0,   0,   0,   0,   0,   0,.191,   0,   0,   0,.245,   0,   0,   0,   0,   0},
+    {   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,.245,   0,.246,   0,   0,   0,   0},
+    {   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,.246,   0,   0,   0,   0,   0},
+    {.035,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,.058,   0},
+    {.035,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,.058},
+    {   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,.058,   0,   0,.105},
+    {   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,.058,.105,   0}
+  };
+
   // the connections from each keypoint in the constrained graphs. -1 means no second connection (leaf)
   // also, the connections are only the ones shown in each graph.
-  int constrained_keypoint_connections[18][2] = {{14,15}, {2,5},   {1,3},   {2,4}, {3,-1},
-						 {1,6},   {5,7},   {6,-1},
-						 {11,9},  {8,10},  {9,-1},
-						 {8,12},  {11,13}, {12,-1},
-						 {0,16},  {0,17},  {14,17}, {15,16}};
+  static constexpr const int constrained_keypoint_connections[18][2] = {
+    {14,15}, {2,5},   {1,3},   {2,4}, {3,-1},
+    {1,6},   {5,7},   {6,-1},
+    {11,9},  {8,10},  {9,-1},
+    {8,12},  {11,13}, {12,-1},
+    {0,16},  {0,17},  {14,17}, {15,16}
+  };
+    
   double kp_Zd[18] = {0, 0, 0.05, 0.03, 0.02, 0.05, 0.03, 0.02, 0, 0.05, 0.03, 0, 0.05, 0.03, 0, 0, 0, 0};
-  Eigen::VectorXd norm_constr;
+  double norm_constr[15] = {.105, .035, .058, .035, .058,
+			    .259, .186, .146, .186, .146,
+			    .191, .245, .246, .245, .246};
   // ====================================================================================================
+  
+
+  class Skeleton
+  {
+  private:   
+    std::vector< std::tuple<Eigen::Vector2d,
+      Eigen::Vector3d, double> > *keypoints;
+    double scale;
+    void constrain_skeleton();    
+    void place_keypoint(int p_id, int c_id);
+    void unobserved_child(int p_id, int c_id);
+    void keypoint_interpolation(int p_id, int c_id, int n_id);
+    Eigen::Vector3d push_vector(Eigen::Vector3d fixed, Eigen::Vector3d pushed, double length);
+  public:
+    Skeleton(std::vector< std::tuple<Eigen::Vector2d,
+	     Eigen::Vector3d, double> > *_keypoints);
+    
+  };
   
   // images for this frame
   cv::Mat rgb, depth, ir, hd;
   sensor_msgs::CameraInfo::ConstPtr camera_info;
 
+  // Skeletons in this frame
+  /* std::vector<Skeleton> skeletons; */
+  
   // OpenPose parameters
   op::ScaleAndSizeExtractor *scaleAndSizeExtractor;
   op::CvMatToOpInput cvMatToOpInput;
@@ -69,7 +116,7 @@ class InfoExtractor {
   op::FrameDisplayer *frameDisplayer;
 
   // Image and 3D mapping
-  Eigen::Vector3d project_to_3d(cv::Point point, double dZ);
+  Eigen::Vector3d project_to_3d(cv::Point point, double dZ, bool override);
   cv::Point project_to_img(Eigen::Vector3d);
   cv::Point img_map(cv::Mat src, cv::Mat dst, cv::Point point);
 

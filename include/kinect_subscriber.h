@@ -33,6 +33,9 @@ class KinectSubscriber
   // cv_bridge::CvImagePtr hd_ptr;
   sensor_msgs::CameraInfo::ConstPtr info_ptr;
 
+
+  // TODO: subscribe to HD image as well. However, I don't think that is possible in Kinetic,
+  // since it would be >5 messages in the filter.
   typedef message_filters::sync_policies::ApproximateTime<
     sensor_msgs::Image,
     sensor_msgs::Image,

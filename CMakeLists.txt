@@ -225,7 +225,11 @@ set(SOURCES
   src/kinect_subscriber.cpp
   src/info_extractor.cpp
   # src/openpose_flags.cpp
+  #class definitions
+  #include/info_extractor.h
   )
+
+
 
 set(TRACKER_SOURCES
   src/mecs_renderer.cpp)
