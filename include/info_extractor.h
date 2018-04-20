@@ -9,6 +9,7 @@
 #include <mecs_monitor/ExtInfo.h>
 
 #include <math.h>
+#include <list>
 
 ///////// OpenPose dependencies //////////
 #include <openpose/core/headers.hpp>
@@ -51,7 +52,7 @@ class InfoExtractor {
     {   0,   0,.186,   0,.146,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0},
     {   0,   0,   0,.146,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0},
     {   0,   0,.259,   0,   0,   0,.186,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0},
-    {   0,   0,   0,   0,.186,   0,   0,.146,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0},
+    {   0,   0,   0,   0,   0,.186,   0,.146,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0},
     {   0,   0,   0,   0,   0,   0,.146,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0},
     {   0,   0,   0,   0,   0,   0,   0,   0,   0,.245,   0,.191,   0,   0,   0,   0,   0,   0},
     {   0,   0,   0,   0,   0,   0,   0,   0,.245,   0,.246,   0,   0,   0,   0,   0,   0,   0},
@@ -68,13 +69,18 @@ class InfoExtractor {
   // the connections from each keypoint in the constrained graphs. -1 means no second connection (leaf)
   // also, the connections are only the ones shown in each graph.
   static constexpr const int constrained_keypoint_connections[18][2] = {
-    {14,15}, {2,5},   {1,3},   {2,4}, {3,-1},
-    {1,6},   {5,7},   {6,-1},
+    {14,15}, {-1,-1},   {5,3},   {2,4}, {3,-1},
+    {2,6},   {5,7},   {6,-1},
     {11,9},  {8,10},  {9,-1},
     {8,12},  {11,13}, {12,-1},
-    {0,16},  {0,17},  {14,17}, {15,16}
+    {0,16},  {0,17},  {14,-1}, {15,-1}
   };
-    
+
+  // ending each subgraph in -1 to escaping traversal
+  int keypoints_head = {0,16,14,15,17,-1};
+  int keypoints_body = {2, 3, 4, 5, 6, 7,-1};
+  int keypoints_legs = {8, 9,10,11,12,13,-1};
+  
   double kp_Zd[18] = {0, 0, 0.05, 0.03, 0.02, 0.05, 0.03, 0.02, 0, 0.05, 0.03, 0, 0.05, 0.03, 0, 0, 0, 0};
   double norm_constr[15] = {.105, .035, .058, .035, .058,
 			    .259, .186, .146, .186, .146,
@@ -86,17 +92,24 @@ class InfoExtractor {
   {
   private:   
     std::vector< std::tuple<Eigen::Vector2d,
-      Eigen::Vector3d, double> > *keypoints;
+      Eigen::Vector3d, double> > keypoints;
     double scale;
-    void constrain_skeleton();    
+    int seeds[3];
+    InfoExtractor *p_ext;
+    int visited_keypoints[18];
+      
     void place_keypoint(int p_id, int c_id);
     void unobserved_child(int p_id, int c_id);
     void keypoint_interpolation(int p_id, int c_id, int n_id);
     Eigen::Vector3d push_vector(Eigen::Vector3d fixed, Eigen::Vector3d pushed, double length);
+    void recursive_constrain(int p_id);
+    std::list<int> sort_keypoints(int *subgraph);
+    
   public:
     Skeleton(std::vector< std::tuple<Eigen::Vector2d,
-	     Eigen::Vector3d, double> > *_keypoints);
-    
+	     Eigen::Vector3d, double> > _keypoints, int _seed, InfoExtractor *_p_ext);
+    std::vector< std::tuple<Eigen::Vector2d,
+      Eigen::Vector3d, double> > get_skeleton();
   };
   
   // images for this frame
@@ -116,7 +129,7 @@ class InfoExtractor {
   op::FrameDisplayer *frameDisplayer;
 
   // Image and 3D mapping
-  Eigen::Vector3d project_to_3d(cv::Point point, double dZ, bool override);
+  /* Eigen::Vector3d project_to_3d(cv::Point point, double dZ, bool override); */
   cv::Point project_to_img(Eigen::Vector3d);
   cv::Point img_map(cv::Mat src, cv::Mat dst, cv::Point point);
 
@@ -125,14 +138,21 @@ class InfoExtractor {
   std_msgs::Float64MultiArray get_3d_keypoints(op::Array<float> keypoints);
   std::tuple<cv::Point, cv::Point> get_roi(Eigen::Vector3d point, double width, double height,
 					   double dX, double dY);
+  
+  void constrain_skeleton(std::vector< std::tuple<Eigen::Vector2d,
+			  Eigen::Vector3d, double> >* keypoints);
   /* cv::Mat get_roi(cv::Point* points); */ // TODO
 
 
  public:
+  std::vector< std::vector<int> > traversal_keypoint_connections;
+  
   InfoExtractor();
   mecs_monitor::ExtInfo extract(sensor_msgs::CameraInfo::ConstPtr& _camera_info,
 				cv::Mat _rgb, cv::Mat _depth, cv::Mat _ir);
   void test();
+
+  Eigen::Vector3d project_to_3d(cv::Point point, double dZ, bool override);
 };
 
 

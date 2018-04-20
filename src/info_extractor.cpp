@@ -8,7 +8,10 @@
 constexpr const double InfoExtractor::edge_lengths[18][18];
 constexpr const int InfoExtractor::constrained_keypoint_connections[18][2];
 
-InfoExtractor::InfoExtractor() 
+InfoExtractor::InfoExtractor() :
+  traversal_keypoint_connections({
+    {1,14,15}, {0,2,5,8,11}, {1,3}, {2,4}, {3}, {1,6}, {5,7}, {6}, {1,9}, {8,10}, {9}, {1,12}, {11,13}, {12}, {0,16}, {0,17}, {14}, {15}
+  })
 {
 
   // norm_constr << .105, .035, .058, .035, .058, .259, .186, .146, .186, .146, .191, .245, .246, .245, .246;
@@ -132,16 +135,18 @@ mecs_monitor::ExtInfo InfoExtractor::extract(sensor_msgs::CameraInfo::ConstPtr& 
 
 void InfoExtractor::test()
 {
-  cv::imshow("ir_image", ir);
-  cv::imshow("rgb_image", rgb);
-  cv::imshow("depth_image", depth);
-
-  cv::Mat histeqlized;
-  depth.convertTo(histeqlized, CV_8UC1);
+  // std::cout << Eigen::Vector3d(1, 2, 3).transpose() << std::endl;
   
-  cv::equalizeHist(histeqlized, histeqlized);
+  // cv::imshow("ir_image", ir);
+  // cv::imshow("rgb_image", rgb);
+  // cv::imshow("depth_image", depth);
 
-  cv::imshow("equalized", histeqlized);
+  // cv::Mat histeqlized;
+  // depth.convertTo(histeqlized, CV_8UC1);
+  
+  // cv::equalizeHist(histeqlized, histeqlized);
+
+  // cv::imshow("equalized", histeqlized);
   return;
 };
 
@@ -217,179 +222,105 @@ std::tuple<cv::Point, cv::Point> InfoExtractor::get_roi(Eigen::Vector3d point,
   return std::make_tuple(upper_left, lower_right);
 };
 
+std::list<int> InfoExtractor::Skeleton::sort_keypoints(int *subgraph)
+{
+  std::list<int> idx; // first index has highest score
+  std::list<int>::iterator idx_it;
 
-// void InfoExtractor::constrain_skeleton(std::vector< std::tuple<Eigen::Vector2d,
-// 				       Eigen::Vector3d, double> > *keypoints)
-// {
+  // std::vector< std::tuple<Eigen::Vector2d,
+  // 			  Eigen::Vector3d, double> >::iterator it = keypoints->begin();
+
   
-//   // constraining step ===================================================================
+  // initial value
+  idx.push_back(*subgraph);
 
-//   double limb_scores[15], limb_lengths[15];
-//   double scale = .0;
-//   double score_sum = 0;
-  
-//   // preparing vector of actual lengths and calculating scale
-//   // for (int i = 0; i < 15; i++) {
-      
-//   //   Eigen::Vector2d a_kp2d, b_kp2d;
-//   //   Eigen::Vector3d a_kp3d, b_kp3d;
-//   //   double a_score, b_score;
-      
-//   //   std::tie(a_kp2d, a_kp3d, a_score) = keypoints->at(constrained_limb_pairs[i][0]);
-//   //   std::tie(b_kp2d, b_kp3d, b_score) = keypoints->at(constrained_limb_pairs[i][1]);
+  while (*subgraph != -1) {
+    bool ins_back = true;
+    int i = 0;
+    for (idx_it = idx.begin(); idx_it != idx.end(); idx_it++) {
+      if (std::get<2>(keypoints->at(*subgraph)) > std::get<2>(keypoints->at(*idx_it))) {
+    	// insert this index
+    	idx.insert(idx_it, i);
+    	ins_back = false;
 
-//   //   double sigma = .39;
-//   //   limb_scores[i] = 1/(std::sqrt(2*M_PI)*sigma) * exp(-1/(4*pow(sigma,2)) * ( pow(a_score-1,2) +
-//   //   									     pow(b_score-1,2)));
-   
-//   //   limb_lengths[i] = (a_kp3d - b_kp3d).norm();
-
-//   //   if (limb_scores[i] < .06 || limb_lengths[i] < 0.2 || limb_lengths[i] > 1.5)
-//   //     limb_scores[i] = 0.0;
+    	break;
+      }
+      i++;
+    }
     
-//   //   std::cout << constrained_limbs_names[i] << ":\t" << limb_lengths[i] << "\t" << limb_scores[i] << "\t(" << a_score << "," << b_score << ")" << std::endl;
-
-//   //   scale += (limb_lengths[i]/norm_constr[i]) * limb_scores[i];
-//   //   score_sum += limb_scores[i];
-//   // }
+    if (ins_back)
+      idx.push_back(*subgraph);
     
-//   // scale = scale/score_sum;
-
-//   // until scale actually works, TODO
-//   scale = 1.72;
-
-//   // std::cout << "height: " << scale << " =================================" << std::endl;
-
-//   // modifying limb lengths based on observations and set tolerances
-//   // skipping tolerances for now
     
-//   // placing out the constrained skeleton
-    
-//   // check  keypoint 8/11 and 5/2
-//   // Eigen::Vector2d a_kp2d;
-//   // Eigen::Vector3d a_kp3d;
-//   // double a_score;
-//   if (std::get<2>(keypoints->at(2)) < 0.6)
-//     std::cout << "right shoulder occlusion: " << std::endl;
-
-//   // starting with the "innermost" keypoints
-
-//   // hip: 8,11  shoulder: 2,5
-    
-//   return;
-// };
-
-InfoExtractor::Skeleton::Skeleton(std::vector< std::tuple<Eigen::Vector2d,
-				  Eigen::Vector3d, double> > *_keypoints)
-{
-  scale = 1.75; // TODO
-  keypoints = _keypoints;
-
-  constrain_skeleton();
-};
-
-void InfoExtractor::Skeleton::constrain_skeleton()
-{
-  
-
-};
-
-/**
- * return a tuple of -1 if imaginary solutions
- * could speed this up by storing more values but..
- */ 
-std::tuple<double, double> abc_formula(double a, double b, double c)
-{
-  double sq = std::pow(b,2) - 4*a*c;
-  if (sq > 0) return std::make_tuple(-1.0,-1.0);
-
-  double x_1 = (-b + std::sqrt(sq))/(2*a);
-  double x_2 = (-b - std::sqrt(sq))/(2*a);
-
-  return std::make_tuple(x_1,x_2);
-};
-
-/**
- * Decides the next keypoint in the graph, constrained by the parent.
- */
-void InfoExtractor::Skeleton::place_keypoint(int p_id, int c_id)
-{
-  if (std::get<1>(keypoints->at(c_id)).norm() == .0)
-    return unobserved_child(p_id, c_id);
-
-  double limb_length = edge_lengths[p_id][c_id] * scale;
-  
-  // check that shortest distance is less than required distance.
-  Eigen::Vector3d a = std::get<1>(keypoints->at(c_id)),
-    b = std::get<1>(keypoints->at(p_id));
-
-  std::get<1>(keypoints->at(c_id)) = push_vector(b,a,limb_length);
-  return;
-};
-
-Eigen::Vector3d InfoExtractor::Skeleton::push_vector(Eigen::Vector3d fixed, Eigen::Vector3d pushed,
-						     double length)
-{
-  // checking projected distance
-  Eigen::Vector3d p_dist = (fixed.dot(pushed) / pushed.dot(pushed)) * pushed;
-  if ((fixed - p_dist).norm() > length)
-    return fixed + length * (fixed-p_dist).normalized(); // we go toward the line as far as possible
-  
-  pushed.normalize();
-  double a = std::pow(pushed.norm(), 2),
-    b = -2 * (fixed.dot(pushed)),
-    c = std::pow(fixed.norm(), 2) - std::pow(length, 2);
-  
-  double x_1, x_2;
-  std::tie(x_1, x_2) = abc_formula(a, b, c);
-
-  return std::max(x_1, x_2) * pushed;
-};
-
-void InfoExtractor::Skeleton::unobserved_child(int p_id, int c_id)
-{
-  // could be unobserved in 2d or too close to the camera
-  // check if next is observed. (if it is, we do keypoint interpolation)
-  int next = (p_id == constrained_keypoint_connections[c_id][0]) ?
-    constrained_keypoint_connections[c_id][1] : constrained_keypoint_connections[c_id][0];
-  
-  if (std::get<1>(keypoints->at(next)).norm() == .0)
-    return keypoint_interpolation(p_id, c_id, next);
-
-  double limb_length = edge_lengths[p_id][c_id] * scale;
-  
-  // check 2d observation
-  if (std::get<0>(keypoints->at(c_id)).norm() == .0) {
-    // placing keypoint straight "down" from parent.
-    // A better method based on constraining the limb within the visual hull could be implemented
-    std::get<1>(keypoints->at(c_id)) = std::get<1>(keypoints->at(p_id)) + Eigen::Vector3d(limb_length,0,0);
-    return;
+    subgraph++;
   }
+  
+  // // excluding keypoints at head and neck.
+  // for (int i = 3; i < keypoints->size()-4; i++) {
+  //   bool ins_back = true;
+    
+  //   for (idx_it = idx.begin(); idx_it != idx.end(); idx_it++) {
+  //     if (std::get<2>(keypoints->at(i)) > std::get<2>(keypoints->at(*idx_it))) {
+  // 	// insert this index
+  // 	idx.insert(idx_it, i);
+  // 	ins_back = false;
 
-  // keypoint was too close to camera, so we now set it out
-  Eigen::Vector3d pt = project_to_3d(cv::Point(std::get<0>(keypoints->at(c_id))(0),
-					       std::get<0>(keypoints->at(c_id))(1)), 1.0, true);
+  // 	break;
+  //     }
+  //   }
+    
+  //   if (ins_back)
+  //     idx.push_back(i);
+  // }
 
-  std::get<1>(keypoints->at(c_id)) = push_vector(std::get<1>(keypoints->at(p_id)), pt, limb_length);
-  return;  
+  return idx;
 };
 
-void InfoExtractor::Skeleton::keypoint_interpolation(int p_id, int c_id, int n_id)
+void InfoExtractor::constrain_skeleton(std::vector< std::tuple<Eigen::Vector2d,
+				       Eigen::Vector3d, double> >* keypoints)
 {
-  Eigen::Vector3d a = std::get<1>(keypoints->at(p_id)), b = std::get<1>(keypoints->at(n_id));
-  double r_a = edge_lengths[p_id][c_id] * scale, r_b = edge_lengths[c_id][n_id] * scale,
-    d = (a-b).norm();
+  // start by finding the best of the innermost keypoints (hips, shoulder)
+  // std::list<int> idxs = sort_keypoints(keypoints);
+  // int N = 8;
 
-  double x = (std::pow(d,2) - pow(r_b,2) + pow(r_a,2))/(2*d);
-  double h = (1/d) * std::sqrt((-d+r_b-r_a)*(-d-r_b-r_a)*(-d+r_b+r_a)*(d+r_b+r_a));
+  // for (std::list<int>::const_iterator ci = idxs.begin(); ci != idxs.end(); ++ci)
+  //   std::cout << *ci << "\t" << std::get<2>(keypoints->at(*ci)) << std::endl;
+  // std::cout << std::endl;
 
-  double dir_x=1, dir_y=1,
-    dir_z = (-a(0)-a(1)) / a(2);
+  // if (N <= idxs.size()) {
+    
+  //   std::vector<Skeleton> skeletons;
+  //   std::vector<Skeleton>::iterator skelit;
+  //   // create skeletons for N best
+  //   for (int i = 0; i < N; i++) {
+  //     std::list<int>::iterator it = std::next(idxs.begin(), i);
+
+  //     // create 3 different seeds
+      
+  //     // Only create skeleton if seed is t units away from the camera, and also, that it is
+  //     // indeed an observed keypoint
+  //     double t = 0.1;
+  //     if (std::get<1>(keypoints->at(*it)).norm() > t &&
+  // 	  !std::isnan(std::get<1>(keypoints->at(*it))(0))) {
+  // 	// recursive_skeleton
+  skeletons.push_back(Skeleton(*keypoints, this));
+    //   }
+    // }
   
-  Eigen::Vector3d direction(dir_x, dir_y, dir_z);
-  direction.normalize();
+    // for (skelit = skeletons.begin(); skelit < skeletons.end(); skelit++) {
+    //   std::cout << "Skeleton:" << std::endl;
+    //   for (int i = 0; i < 18; i++) {
+    // 	//std::cout << std::get<1>(keypoints->at(i)).transpose() << "  --  " << std::get<1>((*skelit).get_skeleton().at(i)).transpose() << std::endl;
+    //   }
+    // }
+
+	//} // N <= idxs.size
+
+  // check error between the different trees
   
-  std::get<1>(keypoints->at(c_id)) = a + x*(b-a).normalized() + (h/2)*direction;
+  // Scoring method 1: distance to well observed keypoints
+
+  // Scoring method 2: how well limbs fit with cloud point data in cylinders around limbs
   return;
 };
 
@@ -441,8 +372,8 @@ std_msgs::Float64MultiArray InfoExtractor::get_3d_keypoints(op::Array<float> key
       tmp_loc.push_back(std::make_tuple(kp2d, kp3d, score));
     }
 
-    Skeleton s(&tmp_loc);
-    
+    // Skeleton s(tmp_loc, *this);
+    constrain_skeleton(&tmp_loc);
     
     // pushing back each refined keypoint ===================================================
     for (std::vector< std::tuple<Eigen::Vector2d,
@@ -463,6 +394,200 @@ std_msgs::Float64MultiArray InfoExtractor::get_3d_keypoints(op::Array<float> key
   }
   return kp_arr;
 };
+
+
+InfoExtractor::Skeleton::Skeleton(std::vector< std::tuple<Eigen::Vector2d,
+				  Eigen::Vector3d, double> > _keypoints, int _seed,
+  				  InfoExtractor *_p_ext) :
+  p_ext(_p_ext),
+  seed(_seed),
+  visited_keypoints{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
+{
+  scale = 1.75; // TODO
+  keypoints = _keypoints;
+  
+  // generate seeds from the info extractor
+  std::list<int> head_kp = sort_keypoints(*keypoints_head[0]);
+  std::list<int> body_kp = sort_keypoints(*keypoints_body[0]);
+  std::list<int> legs_kp = sort_keypoints(*keypoints_legs[0]);
+
+  int N = 3; // nubmber of seeds per graph
+
+  std::vector< std::tuple<Eigen::Vector2d,
+			  Eigen::Vector3d, double> > head_array[N];
+    std::vector< std::tuple<Eigen::Vector2d,
+			  Eigen::Vector3d, double> > body_array[N];
+      std::vector< std::tuple<Eigen::Vector2d,
+			  Eigen::Vector3d, double> > legs_array[N];
+
+  for (int i = 0; i < N; i++) {
+    
+    
+  }
+  
+  // constrain the skeletons
+  recursive_constrain(seed);
+  
+
+  
+  // center and update skeleton scales
+  
+  // score skeletons (distance from well-observed points, over threshold)
+
+  // update scale and recenter
+
+  // combine
+  
+  
+  // the neck is not set by the constrain method, so we set it here.
+  // std::get<1>(keypoints.at(1)) = std::get<1>(keypoints.at(2)) + (std::get<1>(keypoints.at(2))-std::get<1>(keypoints.at(5)))/2;
+  
+};
+
+void InfoExtractor::Skeleton::recursive_constrain(int p_id)
+{
+  if (std::isnan(std::get<1>(keypoints.at(p_id))(0))) std::cout << "GOT A NAN " << p_id  << "seed: " << seed << std::endl;
+  
+  if (visited_keypoints[p_id] == 1) return;
+  visited_keypoints[p_id] = 1;
+
+  // constraining edges
+  place_keypoint(p_id, constrained_keypoint_connections[p_id][0]);
+  place_keypoint(p_id, constrained_keypoint_connections[p_id][1]);
+
+  // now, the two children SHOULD be OK. (check to make sure)
+  if (constrained_keypoint_connections[p_id][0] != -1)
+    recursive_constrain(constrained_keypoint_connections[p_id][0]);
+      
+  if (constrained_keypoint_connections[p_id][1] != -1)
+    recursive_constrain(constrained_keypoint_connections[p_id][1]);
+  
+  // traversing OK!
+  // std::vector<int>::iterator trav_it;
+  // std::vector<int> children = p_ext->traversal_keypoint_connections.at(p_id);
+  // for (trav_it = children.begin(); trav_it != children.end(); trav_it++)
+  //   recursive_constrain(*trav_it);
+
+  return;
+};
+
+std::vector< std::tuple<Eigen::Vector2d,
+			Eigen::Vector3d, double> > InfoExtractor::Skeleton::get_skeleton()
+{
+  return keypoints;
+};
+
+/**
+ * return a tuple of -1 if imaginary solutions
+ * could speed this up by storing more values but..
+ */ 
+std::tuple<double, double> abc_formula(double a, double b, double c)
+{
+  double sq = std::pow(b,2) - 4*a*c;
+  if (sq < 0) return std::make_tuple(-1.0,-1.0);
+
+  double x_1 = (-b + std::sqrt(sq))/(2*a);
+  double x_2 = (-b - std::sqrt(sq))/(2*a);
+
+  // if (std::isnan(x_1) || std::isnan(x_2)) std::cout << "a" << a << " b" << b << " c" << c << std::endl;
+  return std::make_tuple(x_1,x_2);
+};
+
+/**
+ * Decides the next keypoint in the graph, constrained by the parent.
+ */
+void InfoExtractor::Skeleton::place_keypoint(int p_id, int c_id)
+{
+  if (p_id == -1 || c_id == -1) return;
+  
+  if (std::get<1>(keypoints.at(c_id)).norm() == .0)      
+    return unobserved_child(p_id, c_id);
+
+  double limb_length = edge_lengths[p_id][c_id] * scale;
+  
+  // check that shortest distance is less than required distance.
+  Eigen::Vector3d child = std::get<1>(keypoints.at(c_id)),
+    parent = std::get<1>(keypoints.at(p_id));
+
+  if (std::isnan(parent(0))) std::cout << "parent: " << p_id << "\t";
+  if (std::isnan(child(0))) std::cout << "child: " << c_id;
+  if (std::isnan(parent(0)) || std::isnan(child(0)))  std::cout << std::endl;
+  
+  std::get<1>(keypoints.at(c_id)) = push_vector(parent,child,limb_length);
+  return;
+};
+
+Eigen::Vector3d InfoExtractor::Skeleton::push_vector(Eigen::Vector3d fixed, Eigen::Vector3d pushed,
+						     double length)
+{
+  // checking projected distance
+  Eigen::Vector3d p_dist = (fixed.dot(pushed) / pushed.dot(pushed)) * pushed;
+  if ((fixed - p_dist).norm() > length)
+    return fixed + length * (fixed-p_dist).normalized(); // we go toward the line as far as possible
+  
+  pushed.normalize();
+  double a = std::pow(pushed.norm(), 2),
+    b = -2 * (fixed.dot(pushed)),
+    c = std::pow(fixed.norm(), 2) - std::pow(length, 2);
+
+  // if (std::isnan(a) || std::isnan(b) || std::isnan(c))
+  //   std::cout << "pushed " << pushed.transpose() << ", \tfixed " << fixed.transpose() << std::endl;
+  double x_1, x_2;
+  std::tie(x_1, x_2) = abc_formula(a, b, c);
+  
+  return std::max(x_1, x_2) * pushed;
+};
+
+void InfoExtractor::Skeleton::unobserved_child(int p_id, int c_id)
+{
+  // std::cout << "unobserved " << c_id << "(" << p_id << ")" << std::endl;
+  // could be unobserved in 2d or too close to the camera
+  // check if next is observed. (if it is, we do keypoint interpolation)
+  int next = (p_id == constrained_keypoint_connections[c_id][0]) ?
+    constrained_keypoint_connections[c_id][1] : constrained_keypoint_connections[c_id][0];
+
+  if (next != -1)
+    if (std::get<1>(keypoints.at(next)).norm() == .0)
+      return keypoint_interpolation(p_id, c_id, next);
+
+  double limb_length = edge_lengths[p_id][c_id] * scale;
+  
+  // check 2d observation
+  if (std::get<0>(keypoints.at(c_id)).norm() == .0) {
+    // placing keypoint straight "down" from parent.
+    // A better method based on constraining the limb within the visual hull could be implemented
+    std::get<1>(keypoints.at(c_id)) = std::get<1>(keypoints.at(p_id)) + Eigen::Vector3d(limb_length,0,0);
+    return;
+  }
+
+  // keypoint was too close to camera, so we now set it out
+  Eigen::Vector3d pt = p_ext->project_to_3d(cv::Point(std::get<0>(keypoints.at(c_id))(0),
+  						      std::get<0>(keypoints.at(c_id))(1)), 1.0, true);
+
+  std::get<1>(keypoints.at(c_id)) = push_vector(std::get<1>(keypoints.at(p_id)), pt, limb_length);
+  return;  
+};
+
+void InfoExtractor::Skeleton::keypoint_interpolation(int p_id, int c_id, int n_id)
+{
+  Eigen::Vector3d a = std::get<1>(keypoints.at(p_id)), b = std::get<1>(keypoints.at(n_id));
+  double r_a = edge_lengths[p_id][c_id] * scale, r_b = edge_lengths[c_id][n_id] * scale,
+    d = (a-b).norm();
+
+  double x = (std::pow(d,2) - pow(r_b,2) + pow(r_a,2))/(2*d);
+  double h = (1/d) * std::sqrt((-d+r_b-r_a)*(-d-r_b-r_a)*(-d+r_b+r_a)*(d+r_b+r_a));
+
+  double dir_x=1, dir_y=1,
+    dir_z = (-a(0)-a(1)) / a(2);
+  
+  Eigen::Vector3d direction(dir_x, dir_y, dir_z);
+  direction.normalize();
+  
+  std::get<1>(keypoints.at(c_id)) = a + x*(b-a).normalized() + (h/2)*direction;
+  return;
+};
+
+
 
 
 #endif // INFO_EXTRACTOR_CPP
