@@ -1,0 +1,13 @@
+#include <ros/ros.h>
+
+#include "kinect_subscriber.h"
+#include "info_extractor.h"
+
+
+
+int main(int argc, char *argv[])
+{
+
+  
+
+};

@@ -1,0 +1,6 @@
+Header header
+Float64MultiArray.h keypoint_scores
+float64[] limb_pairs
+# TBD:
+# string base_frame # the name of the base_frame for this kinect, used to combine the poses through this frames tf.
+# sensor_msgs/Image[] rois # Region of interests for each person for example face/body

@@ -238,6 +238,7 @@ set(TRACKER_SOURCES
 add_executable(info_extractor_node src/mecs_info_publisher.cpp ${SOURCES})
 add_executable(mecs_tracker_node src/mecs_tracker.cpp ${TRACKER_SOURCES})
 
+
 add_dependencies(info_extractor_node #${PROJECT_NAME}_node
   ${${PROJECT_NAME}_EXPORTED_TARGETS}
   ${catkin_EXPORTED_TARGETS}

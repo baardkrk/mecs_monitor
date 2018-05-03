@@ -1,0 +1,13 @@
+#ifndef PEOPLE_RENDERER_H
+#define PEOPLE_RENDERER_H
+
+/**
+ * Creates ROS topics that renders every person in the array. 
+ * 
+ *
+ */
+
+
+
+
+#endif // PEOPLE_RENDERER_H

@@ -1,0 +1,435 @@
+#ifndef INFO_EXTRACTOR_CPP
+#define INFO_EXTRACTOR_CPP
+
+#include "openpose_flags.cpp"
+#include "info_extractor.h"
+
+// TODO: fix the obvious security holes by initializing the camera_info pointer and the matrices.
+
+InfoExtractor::InfoExtractor()
+{
+
+  // Initializing code for OpenPose =============================================================
+  // Most of this is provided by the OpenPose Tutorial code.
+  
+  /// READING GOOGLE FLAGS
+  const auto outputSize = op::flagsToPoint(FLAGS_output_resolution, "-1x-1");
+  const auto netInputSize = op::flagsToPoint(FLAGS_net_resolution, "-1x368");
+  const auto poseModel = op::flagsToPoseModel(FLAGS_model_pose);
+
+  // checking contradictory flags
+  if (FLAGS_alpha_pose < 0. || FLAGS_alpha_pose > 1.)
+    op::error("Alpha value for blending must be in the range [0,1].", __LINE__, __FUNCTION__, __FILE__);
+  if (FLAGS_scale_gap <= 0. && FLAGS_scale_number > 1)
+    op::error("Incompatible flag configuration: scale_gap must be greater than 0 or scale_number = 1", __LINE__, __FUNCTION__, __FILE__);
+
+  // enable Google logging
+  const bool enableGoogleLogging = true;
+
+  /// INITIALIZE REQUIRED CLASSES
+  scaleAndSizeExtractor = new op::ScaleAndSizeExtractor(netInputSize, outputSize, FLAGS_scale_number, FLAGS_scale_gap);
+  poseExtractorCaffe = new op::PoseExtractorCaffe(poseModel, FLAGS_model_folder, FLAGS_num_gpu_start, {}, op::ScaleMode::ZeroToOne, enableGoogleLogging);
+  poseRenderer = new op::PoseCpuRenderer(poseModel, (float)FLAGS_render_threshold, !FLAGS_disable_blending, (float)FLAGS_alpha_pose);
+  frameDisplayer = new op::FrameDisplayer("OpenPose tutorial", outputSize);
+  
+  /// INITIALIZE RESOURCES ON DESIRED THREAD
+  poseExtractorCaffe->initializationOnThread();
+  poseRenderer->initializationOnThread();
+
+  // OpenPose Initialization Done ===============================================================
+ 
+};
+
+
+op::Array<float> InfoExtractor::run_openpose(cv::Mat inputImage, std::string pw_name="openpose_preview")
+{
+
+  ////////////// POSE ESTIMATION AND RENDERING //////////////
+  const op::Point<int> imageSize{inputImage.cols, inputImage.rows};
+
+  /// GET DESIRED SCALE VALUES
+  std::vector<double> scaleInputToNetInputs;
+  std::vector<op::Point<int>> netInputSizes;
+  double scaleInputToOutput;
+  op::Point<int> outputResolution;
+
+  std::tie(scaleInputToNetInputs, netInputSizes, scaleInputToOutput, outputResolution) = scaleAndSizeExtractor->extract(imageSize);
+
+  /// FORMAT INPUT IMAGE TO OPENPOSE I/O FORMATS
+  const auto netInputArray = cvMatToOpInput.createArray(inputImage, scaleInputToNetInputs, netInputSizes);
+  auto outputArray = cvMatToOpOutput.createArray(inputImage, scaleInputToOutput, outputResolution);
+
+  /// ESTIMATE POSEKEYPOINTS
+  poseExtractorCaffe->forwardPass(netInputArray, imageSize, scaleInputToNetInputs);
+  const auto poseKeypoints = poseExtractorCaffe->getPoseKeypoints();
+  // *pose_keypoints = poseKeypoints;
+  
+  /// RENDER KEYPOINTS
+  poseRenderer->renderPose(outputArray, poseKeypoints, scaleInputToOutput);
+
+  /// OPENPOSE OUTPUT TO CV::MAT
+  auto outputImage = opOutputToCvMat.formatToCvMat(outputArray);
+
+  ////////////// SHOWING RESULTS AND CLOSING //////////////
+  // frameDisplayer.displayFrame(outputImage, 0);
+  // Alternative: cv::imshow(outputImage) + cv::waitKey(0)
+  
+  cv::imshow(pw_name, outputImage);
+  cv::waitKey(1);
+
+  return poseKeypoints;
+
+};
+
+mecs_monitor::ExtInfo InfoExtractor::extract(sensor_msgs::CameraInfo::ConstPtr& _camera_info,
+					     cv::Mat _rgb, cv::Mat _depth, cv::Mat _ir)
+{
+  mecs_monitor::ExtInfo e_info;
+  // Updating frames and camera info ======================================
+  
+  camera_info = _camera_info;
+
+  rgb = _rgb; depth = _depth; ir = _ir;
+  cv::Mat color_ir;
+  cv::cvtColor(ir, color_ir, cv::COLOR_GRAY2BGR);
+
+  // other blurring methods could be utilized, such as average
+  cv::GaussianBlur(depth, blurred_depth, cv::Size(5,5), 0);
+
+  // Generating information ===============================================
+
+  op::Array<float> keypoints = run_openpose(color_ir, "ir_preview");
+  std_msgs::Float64MultiArray keypoint_array = get_3d_keypoints(keypoints);
+  // limbs described in the coco model
+
+  // TBD: get RoIs remember to use the same keypoint indices!
+  
+  // Packaging information to message =====================================
+  
+  e_info.header.stamp = ros::Time::now();
+  e_info.header.frame_id = camera_info->header.frame_id;
+  e_info.keypoints = keypoint_array;
+
+  return e_info;
+};
+
+// Any depth that is nearer to the camera than 0.2m is invalid
+std::tuple<double, double, double> InfoExtractor::project_3d(int row, int col)
+{
+  double Z = depth.at<double>(row, col), X, Y;
+  double fx = camera_info->K[0],
+    fy = camera_info->K[4],
+    Cx = camera_info->K[2],
+    Cy = camera_info->K[5];
+
+  Y = ((double)row - Cy) * Z / fy;
+  X = ((double)col - Cx) * Z / fx;
+
+  return std::make_tuple(X, Y, Z);
+};
+
+
+// TDOO: make these functions general for N dimensional vectors
+double vector_abs(double x, double y, double z)
+{ return sqrt(pow(x,2) + pow(y,2) + pow(z,2)); };
+double vector_dot(double a, double b, double c, double x, double y, double z)
+{ return a*x + b*y + c*z; };
+std::tuple<double, double, double> norm_vec(double x, double y, double z)
+{ double abs = vector_abs(x,y,z); return std::make_tuple(x/abs, y/abs, z/abs); };
+  
+/**
+ * moves the point (mvX,mvY,mvZ) so the distance between the returned point and the fixed point,
+ * (fxX,fxY,fxZ) is equal to l.
+ */
+std::tuple<double, double, double> InfoExtractor::move_keypoint(double mvX, double mvY, double mvZ,
+								double fxX, double fxY, double fxZ,
+								double l)
+{
+
+  // check if distance to line is greater than l
+  double r = sin(acos( (mvX*fxX + mvY*fxY + mvZ*fxZ) /
+		       vector_abs(mvX,mvY,mvZ)*vector_abs(fxX,fxY,fxZ) ));
+
+  // this could be replaced with the "search along limb vector and find closest..."
+  if (r >= l) {
+    // if it is, find vector perpendicular to the line, and move the point l lengths in that direction.
+    // or, as we'll call it, find the dot product
+    double x,y,z,s;
+    std::tie(x,y,z) = norm_vec(mvX, mvY, mvZ);
+    s = vector_dot(x,y,z,fxX,fxY,fxZ);
+    x = x*s - fxX; y = y*s - fxY; z = z*s - fxZ;
+    std::tie(x,y,z) = norm_vec(x,y,z);
+    x = x*l + fxX; y = y*l + fxY; z = z*l + fxZ;
+    
+    return std::make_tuple(x,y,z);
+  }
+  
+  // if the distance is less than l, solve the second degree polynomial
+  double s = .0;
+  double a = pow(vector_abs(mvX,mvY,mvZ), 2);  // pow(mvX,2) + pow(mvY,2) + pow(mvZ,2);
+  double b = -2 * vector_dot(mvX, mvY, mvZ, fxX, fxY, fxZ);// (mvX*fxX + mvY*fxY + mvZ*fxZ);
+  double c = pow(vector_abs(fxX,fxY,fxZ), 2) - pow(l,2); // pow(fxX,2) + pow(fxY,2) + pow(fxZ,2) 
+
+  double tmp = pow(b,2) - 4 *a*c;
+
+  if (tmp > 0) {
+
+    double s1,s2;
+    s1 = (-b + sqrt(tmp)) / 2*a;
+    s2 = (-b - sqrt(tmp)) / 2*a;
+
+    s = std::max(s1, s2);
+  }
+
+  return std::make_tuple(s*mvX, s*mvY, s*mvZ);
+};
+
+// a should always be smaller than b (just so we can skip the min test)
+double InfoExtractor::limb_score(double a, double b)
+{ return a*(a + b)/2.0; };
+
+// [Person][Body Part][Point]->[row, col, X,Y,Z, score]
+std_msgs::Float64MultiArray InfoExtractor::get_3d_keypoints(op::Array<float> keypoints)
+{
+  std_msgs::Float64MultiArray kp_arr;
+  double row, col, X, Y, Z, score;
+
+  kp_arr.layout.data_offset = 0;
+
+  kp_arr.layout.dim.push_back(std_msgs::MultiArrayDimension());
+  kp_arr.layout.dim[0].label = "person";
+  kp_arr.layout.dim[0].size = keypoints.getSize(0);
+  kp_arr.layout.dim[0].stride = keypoints.getSize(1) * (keypoints.getSize(2) + 3);
+  
+  kp_arr.layout.dim.push_back(std_msgs::MultiArrayDimension());
+  kp_arr.layout.dim[1].label = "body part";
+  kp_arr.layout.dim[1].size = keypoints.getSize(1);
+  kp_arr.layout.dim[1].stride = keypoints.getSize(2) + 3;
+  
+  kp_arr.layout.dim.push_back(std_msgs::MultiArrayDimension());
+  kp_arr.layout.dim[2].label = "location";
+  kp_arr.layout.dim[2].size = keypoints.getSize(2) + 3; // row,col,score is already there. +3 for xyz
+  kp_arr.layout.dim[2].stride = 1;
+
+  kp_arr.data.clear();
+
+  for (auto person = 0; person < keypoints.getSize(0); person++) {
+    // std::cout << "Person: " << person << std::endl;
+
+    
+    // collecting all data for this person so we can refine it in a separate step.
+    std::vector< std::tuple<double, double, double, double, double, double> > tmp_loc;
+    for (auto body_part = 0; body_part < keypoints.getSize(1); body_part++) {
+
+      col = (double)keypoints[{person, body_part, 0}];
+      row = (double)keypoints[{person, body_part, 1}];
+      score = (double)keypoints[{person, body_part, 2}];
+
+      std::tie(X, Y, Z) = project_3d((int)row, (int)col);
+
+      // std::cout << "(" << X << ", " << Y << ", " << Z << ")\n";
+      tmp_loc.push_back(std::make_tuple(row, col, X, Y, Z, score));
+    }
+    // std::cout << std::endl;
+    // constraining step ===================================================================
+
+    // choose which point to push back
+    // calculating limb scores to get the weighted sum for scale later
+
+    // Taking the weighted average scale 
+    double scale = .0, score_sum = .0;
+    std::vector<double> scores;
+    for (int i = 0; i < 10; i++) {
+      std::tuple<double, double, double, double, double, double> a, b;
+      a = tmp_loc.at(constrained_limb_pairs[i][0]);
+      b = tmp_loc.at(constrained_limb_pairs[i][1]);
+
+      // (figure out which of a or b should be moved, and calculate the limb score.)
+
+      // get the limb score and length.
+      double length = vector_abs(std::get<2>(a)-std::get<2>(b),
+    				 std::get<3>(a)-std::get<3>(b),
+    				 std::get<4>(a)-std::get<4>(b));
+      double lscore = limb_score(std::get<5>(a),std::get<5>(b));
+      
+      scale += (length / normalized_constraints[i]) * lscore;
+      score_sum += lscore;
+      scores.push_back(lscore);
+    }
+    scale = scale/score_sum;
+
+    std::cout << "Person " << person << "'s height: " << scale << std::endl;
+    
+    // refining the scale in relation to each body part. about +- 15%
+    std::vector<double> adjusted_lengths; // contains the length each limb will aspire to be
+    
+    for (int i = 0; i < 10; i++) {
+      std::tuple<double, double, double, double, double, double> a, b;
+      a = tmp_loc.at(constrained_limb_pairs[i][0]);
+      b = tmp_loc.at(constrained_limb_pairs[i][1]);
+
+      double length = vector_abs(std::get<2>(a)-std::get<2>(b),
+    				 std::get<3>(a)-std::get<3>(b),
+    				 std::get<4>(a)-std::get<4>(b));
+
+      // the ideal length is:
+      double ideal_l = normalized_constraints[i]*scale;
+      if (length <= ideal_l*1.15 && length >= ideal_l*0.85)
+    	adjusted_lengths.push_back(length); // does not incorporate symmetry..
+      else
+    	if (length < ideal_l)
+    	  adjusted_lengths.push_back(ideal_l*0.85);
+    	else
+    	  adjusted_lengths.push_back(ideal_l*1.15);
+    }
+
+
+    // TODO put this in a method and send pointers to the array
+    //// Assuring symmetry
+    double right, left, final_length;
+    // Arms
+    right = adjusted_lengths.at(2);
+    left = adjusted_lengths.at(0);
+    final_length = (scores.at(0) < scores.at(2)) ? right : left;
+    adjusted_lengths.at(2) = final_length;
+    adjusted_lengths.at(0) = final_length;
+    
+    // Forearms
+    right = adjusted_lengths.at(3);
+    left = adjusted_lengths.at(1);
+    final_length = (scores.at(1) < scores.at(3)) ? right : left;
+    adjusted_lengths.at(3) = final_length;
+    adjusted_lengths.at(1) = final_length;
+    
+    // Thighs
+    right = adjusted_lengths.at(7);
+    left = adjusted_lengths.at(5);
+    final_length = (scores.at(5) < scores.at(7)) ? right : left;
+    adjusted_lengths.at(7) = final_length;
+    adjusted_lengths.at(5) = final_length;
+    
+    // Legs
+    right = adjusted_lengths.at(8);
+    left = adjusted_lengths.at(6);
+    final_length = (scores.at(6) < scores.at(8)) ? right : left;
+    adjusted_lengths.at(8) = final_length;
+    adjusted_lengths.at(6) = final_length;
+    
+    /// move keypoints (starting with the innermost)
+    // Order: hip, shoulders, lThigh, rThigh, lLeg, rLeg, lArm, rArm, lForearm, rForearm
+    std::tuple<double, double, double, double, double, double> a, b;
+    double mvX, mvY, mvZ, fxX, fxY, fxZ;
+    
+    // Hip
+    a = tmp_loc.at(constrained_limb_pairs[4][0]);
+    b = tmp_loc.at(constrained_limb_pairs[4][1]);
+
+    // checking score
+    if (std::get<5>(a) < std::get<5>(b)) {
+
+      row = std::get<0>(a); col = std::get<1>(a);
+      mvX = std::get<2>(a); mvY = std::get<3>(a); mvZ = std::get<4>(a);
+      score = std::get<5>(a);
+      
+      fxX = std::get<2>(b); fxY = std::get<3>(b); fxZ = std::get<4>(b);
+
+      std::tie(X,Y,Z) = move_keypoint(mvX, mvY, mvZ, fxX, fxY, fxZ, adjusted_lengths.at(4));
+      tmp_loc.at(constrained_limb_pairs[4][0]) = std::make_tuple(row, col, X, Y, Z, score);
+    } else {
+
+      row = std::get<0>(b); col = std::get<1>(b);
+      mvX = std::get<2>(b); mvY = std::get<3>(b); mvZ = std::get<4>(b);
+      score = std::get<5>(b);
+      
+      fxX = std::get<2>(a); fxY = std::get<3>(a); fxZ = std::get<4>(a);
+
+      std::tie(X,Y,Z) = move_keypoint(mvX, mvY, mvZ, fxX, fxY, fxZ, adjusted_lengths.at(4));
+      tmp_loc.at(constrained_limb_pairs[4][1]) = std::make_tuple(row, col, X, Y, Z, score);
+    }
+   
+    // Shoulder
+    a = tmp_loc.at(constrained_limb_pairs[9][0]);
+    b = tmp_loc.at(constrained_limb_pairs[9][1]);
+
+    // checking score
+    if (std::get<5>(a) < std::get<5>(b)) {
+
+      row = std::get<0>(a); col = std::get<1>(a);
+      mvX = std::get<2>(a); mvY = std::get<3>(a); mvZ = std::get<4>(a);
+      score = std::get<5>(a);
+      
+      fxX = std::get<2>(b); fxY = std::get<3>(b); fxZ = std::get<4>(b);
+
+      std::tie(X,Y,Z) = move_keypoint(mvX, mvY, mvZ, fxX, fxY, fxZ, adjusted_lengths.at(4));
+      tmp_loc.at(constrained_limb_pairs[9][0]) = std::make_tuple(row, col, X, Y, Z, score);
+    } else {
+
+      row = std::get<0>(b); col = std::get<1>(b);
+      mvX = std::get<2>(b); mvY = std::get<3>(b); mvZ = std::get<4>(b);
+      score = std::get<5>(b);
+      
+      fxX = std::get<2>(a); fxY = std::get<3>(a); fxZ = std::get<4>(a);
+
+      std::tie(X,Y,Z) = move_keypoint(mvX, mvY, mvZ, fxX, fxY, fxZ, adjusted_lengths.at(4));
+      tmp_loc.at(constrained_limb_pairs[9][1]) = std::make_tuple(row, col, X, Y, Z, score);
+    }    
+
+    // Arms
+    // a = tmp_loc.at(constrained_limb_pairs[9][0]);
+    // b = tmp_loc.at(constrained_limb_pairs[9][1]);
+    // if () {
+
+
+    // }
+
+    
+    // for (std::vector< std::tuple<double, double, double,
+    // 	   double, double, double> >::iterator it = tmp_loc.begin();
+    // 	 it != tmp_loc.end(); ++it) {
+      
+    //   std::tie(row, col, X, Y, Z, score) = *it;
+    // }
+    
+    // pushing back each refined keypoint
+    for (std::vector< std::tuple<double, double, double,
+	   double, double, double> >::iterator it = tmp_loc.begin();
+	 it != tmp_loc.end(); ++it) {
+
+      std::tie(row, col, X, Y, Z, score) = *it;
+      
+      kp_arr.data.push_back(row);
+      kp_arr.data.push_back(col);
+      kp_arr.data.push_back(X);
+      kp_arr.data.push_back(Y);
+      kp_arr.data.push_back(Z);
+      kp_arr.data.push_back(score);
+
+    }
+  }
+
+  return kp_arr;
+};
+
+
+// std::vector< std::tuple<double, double, double,
+// 			double, double, double> > InfoExtractor::refine_person(std::vector<  >)
+
+
+void InfoExtractor::test()
+{
+  cv::Mat color_ir;
+
+  cv::cvtColor(ir, color_ir, cv::COLOR_GRAY2BGR);
+  
+
+  //std::cout << color_ir << "\n ====================================================================================== \n";
+
+  // cv::Mat check_it;
+  // the rgb image took the spotlight (oor, the net input size would be wrong...)
+  // cv::hconcat(rgb, color_ir, check_it);
+  run_openpose(color_ir, "ir_preview");
+  // run_openpose(rgb, "rgb_preview");
+  // gaussian_win(5);
+};
+
+#endif // INFO_EXTRACTOR_CPP
