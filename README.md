@@ -4,9 +4,9 @@ Another feature of the MECS project is to fuction as an automatic safety alarm f
 
 - [x] Human pose (and 3D location)
 - [x] Regions of interest (face, chest, hands, more can easily be added)
-- [] Mood
-- [] Heart rate
-- [] Respiration rate
+- [ ] Mood
+- [ ] Heart rate
+- [ ] Respiration rate
 
 The package is written in C++ for ROS Kinetic and Microsoft's Kinect v2.
 
