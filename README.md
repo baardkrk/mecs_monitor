@@ -18,6 +18,8 @@ Make sure you have a CUDA compatible graphics card (and driver), and install the
 Now, install [opencv](https://github.com/opencv/opencv "OpenCV's GitHub repo"). You can also install opencv from your distributions repository. If you build it from source, you can turn on CUDA compatibility to make full use of your graphics card for image processing.
 This version of opencv will only be used when you install Caffe, and OpenPose. A different version of OpenCV is included in ROS Kinetic, and is what will be used by the package. (Unless ROS creates a symbolic link to the installed version if it is detected. I'm not sure.)
 
+Test for trello integration
+
 Now, [install ROS](http://wiki.ros.org/kinetic/Installation/ "ROS Kinetic installation pages") if it is not installed. When this package was first written, the program was tested on Ubuntu 16.04 with ROS Kinetic.
 I'm currently testing ROS Kinetic on Ubuntu 18.04, but it might not work.
 
